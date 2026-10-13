@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>HTML File Loader & Pointer Lock</title>
+  <style>
+    :root{--gap:12px;--muted:#666}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;line-height:1.4;margin:0;padding:24px;background:#f7f8fb;color:#111}
+    h1{margin:0 0 12px;font-size:20px}
+    .layout{display:grid;grid-template-columns:360px 1fr;gap:18px}
+    .panel{background:#fff;border-radius:8px;padding:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .drop{border:2px dashed #ddd;border-radius:8px;padding:18px;text-align:center;color:var(--muted);cursor:pointer}
+    input[type=file]{display:none}
+    .files{margin-top:12px}
+    .file{display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:6px}
+    .file + .file{margin-top:8px}
+    button{background:#0366d6;color:#fff;border:none;padding:8px 10px;border-radius:6px;cursor:pointer}
+    button.ghost{background:transparent;color:#0366d6;border:1px solid #dbe7ff}
+    .small{font-size:13px;padding:6px 8px}
+    .meta{font-size:13px;color:var(--muted)}
+    iframe.viewer{width:100%;height:80vh;border:1px solid #e1e6f0;border-radius:6px;background:#000}
+    .controls{display:flex;gap:8px;align-items:center}
+    footer{margin-top:12px;color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+  <h1>HTML File Loader</h1>
+  <div class="layout">
+    <div class="panel">
+      <label class="drop" id="drop">Click or drop an .html file here
+        <input id="fileInput" type="file" accept=".html,.htm" />
+      </label>
+
+      <div class="files" id="filesList" aria-live="polite"></div>
+
+      <div style="margin-top:12px" class="controls">
+        <button id="loadLast" class="small ghost">Load last file</button>
+        <button id="lockBtn" class="small">Lock cursor</button>
+        <div id="lockStatus" class="meta">Unlocked</div>
+      </div>
+
+      <footer>
+        Tip: After loading a game or 3D demo, click "Lock cursor" to allow free camera movement. You can also press Esc to release the pointer lock.
+      </footer>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div>
+          <strong id="title">No file loaded</strong>
+          <div class="meta" id="subtitle">Load a local .html file to preview it here</div>
+        </div>
+        <div>
+          <button id="openNew" class="small ghost">Open in new tab</button>
+        </div>
+      </div>
+
+      <!-- iframe uses srcdoc so the loaded HTML runs in the same origin context as this page -->
+      <iframe id="viewer" class="viewer" allow="fullscreen; autoplay; pointer-lock; clipboard-write"></iframe>
+    </div>
+  </div>
+
+  <script>
+    // Simple HTML file loader that injects files into an iframe using srcdoc.
+    // The iframe has `allow="pointer-lock"` so pointer lock can be requested on it.
+
+    const fileInput = document.getElementById('fileInput');
+    const drop = document.getElementById('drop');
+    const filesList = document.getElementById('filesList');
+    const viewer = document.getElementById('viewer');
+    const title = document.getElementById('title');
+    const subtitle = document.getElementById('subtitle');
+    const loadLast = document.getElementById('loadLast');
+    const openNew = document.getElementById('openNew');
+    const lockBtn = document.getElementById('lockBtn');
+    const lockStatus = document.getElementById('lockStatus');
+
+    let loadedFiles = []; // {name, content}
+    let currentIndex = -1;
+
+    function renderFiles() {
+      filesList.innerHTML = '';
+      if (loadedFiles.length === 0) {
+        filesList.textContent = 'No files loaded yet.';
+        return;
+      }
+      loadedFiles.forEach((f, i) => {
+        const row = document.createElement('div');
+        row.className = 'file';
+
+        const label = document.createElement('div');
+        label.innerHTML = `<div style="font-weight:600">${escapeHtml(f.name)}</div><div class="meta">${f.size} bytes</div>`;
+
+        const controls = document.createElement('div');
+        controls.style.display = 'flex';
+        controls.style.gap = '8px';
+
+        const btnLoad = document.createElement('button');
+        btnLoad.className = 'small';
+        btnLoad.textContent = 'Load';
+        btnLoad.onclick = () => loadFile(i);
+
+        const btnPreview = document.createElement('button');
+        btnPreview.className = 'small ghost';
+        btnPreview.textContent = 'Preview';
+        btnPreview.onclick = () => previewSource(f.content);
+
+        controls.appendChild(btnLoad);
+        controls.appendChild(btnPreview);
+        row.appendChild(label);
+        row.appendChild(controls);
+        filesList.appendChild(row);
+      });
+    }
+
+    function escapeHtml(s){
+      return s.replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    }
+
+    function previewSource(src) {
+      // open a modal-like window showing the HTML source in a new tab
+      const w = window.open('', '_blank');
+      if (!w) { alert('Popup blocked. Allow popups to preview source.'); return; }
+      w.document.write('<!doctype html><meta charset="utf-8"><title>Source preview</title><pre style="white-space:pre-wrap;word-break:break-all;padding:16px;font-family:monospace;">'+escapeHtml(src)+'</pre>');
+      w.document.close();
+    }
+
+    function loadFile(index) {
+      const f = loadedFiles[index];
+      currentIndex = index;
+      viewer.srcdoc = f.content;
+      title.textContent = f.name;
+      subtitle.textContent = `${f.size} bytes — running in iframe (srcdoc)`;
+      openNew.disabled = false;
+    }
+
+    fileInput.addEventListener('change', e => {
+      handleFiles(Array.from(e.target.files));
+      fileInput.value = '';
+    });
+
+    // Drag & drop
+    drop.addEventListener('click', () => fileInput.click());
+    drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor = '#0366d6'; });
+    drop.addEventListener('dragleave', e => { e.preventDefault(); drop.style.borderColor = '#ddd'; });
+    drop.addEventListener('drop', e => {
+      e.preventDefault(); drop.style.borderColor = '#ddd';
+      const dt = e.dataTransfer; if (!dt) return;
+      const files = Array.from(dt.files).filter(f => /\.html?$/.test(f.name));
+      handleFiles(files);
+    });
+
+    function handleFiles(files) {
+      if (!files || files.length === 0) return;
+      const readers = files.map(f => readFileAsText(f).then(content => ({name: f.name, content, size: f.size}))); 
+      Promise.all(readers).then(items => {
+        loadedFiles = loadedFiles.concat(items);
+        renderFiles();
+        // auto-load the last one
+        loadFile(loadedFiles.length - 1);
+      }).catch(err => alert('Failed to read file: '+err));
+    }
+
+    function readFileAsText(file) {
+      return new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(r.error);
+        r.readAsText(file);
+      });
+    }
+
+    loadLast.addEventListener('click', () => {
+      if (loadedFiles.length === 0) return alert('No files loaded');
+      loadFile(loadedFiles.length - 1);
+    });
+
+    openNew.addEventListener('click', () => {
+      if (currentIndex < 0) return alert('No file loaded');
+      // Open in a new tab using a blob URL so it runs as a full page
+      const blob = new Blob([loadedFiles[currentIndex].content], {type: 'text/html'});
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    });
+
+    // Pointer lock: request pointer lock on the iframe element.
+    lockBtn.addEventListener('click', () => {
+      // User gesture required — clicking this button is a gesture.
+      if (document.pointerLockElement === viewer) {
+        document.exitPointerLock();
+        return;
+      }
+
+      // Request pointer lock on the iframe element. Many browsers allow this if the iframe has allow="pointer-lock".
+      viewer.requestPointerLock();
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      const locked = document.pointerLockElement === viewer;
+      lockStatus.textContent = locked ? 'Locked' : 'Unlocked';
+      lockBtn.textContent = locked ? 'Unlock cursor' : 'Lock cursor';
+    });
+    document.addEventListener('pointerlockerror', (e) => {
+      console.error('Pointer lock error', e);
+      alert('Pointer lock failed. Some browsers require the page to be served over http(s) and the iframe to allow pointer-lock.');
+    });
+
+    // Keyboard hint: ESC releases pointer lock automatically in browsers.
+
+    // Initial state
+    renderFiles();
+    openNew.disabled = true;
+
+    // Expose for debugging
+    window._loadedFiles = loadedFiles;
+  </script>
+</body>
+</html>
